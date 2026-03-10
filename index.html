@@ -295,10 +295,13 @@ function scoreShots(holes,canvas,cfg){
   const mode=cfgObj.mode||'decimal';
   const{width:w,height:h}=canvas;
   const spec=getISSFTargetSpec(cfgObj.type||'AIR_PISTOL_10M');
-  // Use alignment data if available, otherwise fall back to image centre
+  // Alignment data is REQUIRED for accurate scoring.
+  // The fallback (image-centre + proportional estimate) is only used for the
+  // built-in demo target, where the target is synthetically centred and sized.
+  // For any real photograph, App.alignData must be set by the alignment screen.
   const ad=App.alignData;
   const cx=ad?ad.cx:w/2, cy=ad?ad.cy:h/2;
-  const pxMm=ad?ad.pxMm:(Math.min(w,h)*0.47/spec.outerRMm);
+  const pxMm=ad?ad.pxMm:(Math.min(w,h)*0.47/spec.outerRMm); // fallback: demo only
   const maxR=pxMm*spec.outerRMm;
   const pelletRpx=pelletRadiusMm(cfgObj.caliber)*pxMm;
   return holes.map((hole,idx)=>{
@@ -323,9 +326,10 @@ function calcStats(shots,canvas,cfg){
   const{width:w,height:h}=canvas;
   const cfgObj=(typeof cfg==='object'&&cfg)?cfg:{};
   const spec=getISSFTargetSpec(cfgObj.type||'AIR_PISTOL_10M');
+  // Same alignment source as scoreShots — must stay in sync
   const ad=App.alignData;
   const cx=ad?ad.cx:w/2, cy=ad?ad.cy:h/2;
-  const pxMm=ad?ad.pxMm:(Math.min(w,h)*0.47/spec.outerRMm);
+  const pxMm=ad?ad.pxMm:(Math.min(w,h)*0.47/spec.outerRMm); // fallback: demo only
   const mX=shots.reduce((a,s)=>a+s.cx,0)/shots.length;
   const mY=shots.reduce((a,s)=>a+s.cy,0)/shots.length;
   const radii=shots.map(s=>Math.hypot(s.cx-mX,s.cy-mY));
@@ -348,9 +352,10 @@ function drawOverlay(canvas,shots,stats,cfg){
   const ctx=out.getContext('2d');
   ctx.drawImage(canvas,0,0);
   const spec=getISSFTargetSpec((cfg&&cfg.type)||'AIR_PISTOL_10M');
+  // Same alignment source as scoreShots — must stay in sync
   const ad=App.alignData;
   const cx=ad?ad.cx:w/2, cy=ad?ad.cy:h/2;
-  const pxMm=ad?ad.pxMm:(Math.min(w,h)*0.47/spec.outerRMm);
+  const pxMm=ad?ad.pxMm:(Math.min(w,h)*0.47/spec.outerRMm); // fallback: demo only
   const maxR=pxMm*spec.outerRMm;
   // Draw rings using actual ISSF step proportions (outer→inner = score1→score10)
   for(let i=0;i<10;i++){
@@ -1366,11 +1371,13 @@ const Ed={
     // image
     ctx.save();ctx.translate(this.tx,this.ty);ctx.scale(this.scale,this.scale);
     ctx.drawImage(this.img,0,0);ctx.restore();
-    // ring guides — use alignData if set, else image-centre/proportional fallback
+    // ring guides — use alignData (always set for real images); fallback is demo-only
     const ad=App.alignData;
     const imgCx=ad?ad.cx:this.imgW/2;
     const imgCy=ad?ad.cy:this.imgH/2;
     const spec=getISSFTargetSpec(ad?.type||App.cfg?.type||'AIR_PISTOL_10M');
+    // pxMm from alignment → maxR in image pixels = pxMm × outerRMm
+    // Fallback (demo only): estimate from image size — safe only for centred synthetic targets
     const maxR=ad?(ad.pxMm*spec.outerRMm):Math.min(this.imgW,this.imgH)*0.47;
     for(let i=1;i<=10;i++){
       const r=maxR*spec.steps[10-i]/spec.outerRMm;
@@ -2120,13 +2127,12 @@ function buildRecommendations(ss,overallAvg,avgSpread,avgRadius,improving){
 function buildCameraOverlaySVG(type){
   const spec=getISSFTargetSpec(type||'AIR_PISTOL_10M');
   const S=1000;
-  const cx=S/2, cy=S/2, maxR=S*0.46;
+  const cx=S/2, cy=S/2;
+  // Use same proportion as AlignEng.fixedR (42% of shorter dim) so the camera
+  // live-view rings are visually consistent with the alignment screen rings.
+  // S is square so Math.min(S,S)*0.42 = S*0.42.
+  const maxR=S*0.42;
   const scale=maxR/spec.outerRMm;
-
-  let svg=`<svg viewBox="0 0 ${S} ${S}" style="width:100%;height:100%;position:absolute;top:0;left:0">`;
-
-  // outer ring
-  svg+=`<circle cx="${cx}" cy="${cy}" r="${maxR}" fill="none" stroke="rgba(0,255,120,0.8)" stroke-width="4"/>`;
 
   // all rings
   for(let i=0;i<10;i++){
@@ -2269,20 +2275,25 @@ function pgGuide(){
     {
       num:'03',color:'var(--amber)',
       title:'Upload or Capture the Image',
-      body:'Tap UPLOAD TARGET IMAGE to select a photo from your gallery, or tap USE CAMERA to shoot directly. Hold the phone parallel to the target — avoid angles. The target should fill most of the frame. Natural light or a bright room works best; avoid shadows across the target face.'
+      body:'Tap UPLOAD TARGET IMAGE to select a photo from your gallery, or tap USE CAMERA to shoot directly. On the camera screen, hold the phone steady and align the physical target to the green ring overlay before shooting — this gives you a head-start on alignment.'
     },
     {
       num:'04',color:'var(--green)',
+      title:'Align the Target to Fixed Rings',
+      body:'After uploading or capturing, the ALIGN screen shows fixed green scoring rings at the centre. Drag the photo with one finger to position the target bullseye under the crosshair. Pinch with two fingers to zoom the photo until the target\'s outermost ring matches the green outermost ring. Rings never move — only the image does. This ensures consistent, repeatable scoring no matter what angle or distance the photo was taken from.'
+    },
+    {
+      num:'05',color:'var(--blue)',
       title:'Configure Your Session',
       body:'Select your target type (10m Air Pistol, 10m Air Rifle, etc.), caliber (.177 is the ISSF standard), and scoring method (ISSF Decimal is recommended for competition training). Your choices are remembered separately for each shooter profile.'
     },
     {
-      num:'05',color:'var(--blue)',
+      num:'06',color:'var(--amber)',
       title:'Place Shot Markers',
       body:'The editor opens automatically. Pinch to zoom in close, then tap exactly on each pellet hole to place a marker. Drag to reposition. Use UNDO if you make a mistake. Always zoom to at least 200–300% before placing — small placement errors directly affect your score accuracy.'
     },
     {
-      num:'06',color:'var(--amber)',
+      num:'07',color:'var(--green)',
       title:'Review Results & Track Progress',
       body:'Tap APPLY to calculate scores. You\'ll see total score, MPI (Mean Point of Impact), extreme spread, and a full shot breakdown. Every session saves automatically to your profile. After 2+ sessions the STATS tab shows your score trends; after 3+ the REPORT tab gives a full monthly breakdown.'
     },
@@ -2556,20 +2567,24 @@ function importData(){
 }
 
 // ══════════════════════════════════════════════════════════════════
-//  ALIGNMENT ENGINE — interactive ring overlay for image alignment
+//  ALIGNMENT ENGINE — FIXED rings, user pans/zooms the IMAGE
+//  This ensures consistent scoring regardless of how the image
+//  was captured (upload or camera at any angle/distance).
+//  Green rings are always at the same fixed position on screen.
+//  User drags/pinches the photo to line the target up with the rings.
 // ══════════════════════════════════════════════════════════════════
 const AlignEng={
   img:null,imgW:0,imgH:0,
   type:'AIR_PISTOL_10M',
-  // ring center in CANVAS css-px space
-  cx:0,cy:0,
-  // outer ring radius in canvas css-px
-  radius:100,
+  // Image transform: canvas_px = image_px * scale + (tx, ty)
+  scale:1,tx:0,ty:0,
+  // Fixed ring anchor — always at canvas centre, never changes
+  fixedCx:0,fixedCy:0,fixedR:100,
   // pan/pinch state
-  isPan:false,panSx:0,panSy:0,panCx0:0,panCy0:0,
-  pinchDist0:0,pinchRad0:0,pinchCx0:0,pinchCy0:0,pinchSx0:0,pinchSy0:0,
+  isPan:false,panSx:0,panSy:0,panTx0:0,panTy0:0,
+  pinchDist0:0,pinchScale0:1,pinchTx0:0,pinchTy0:0,pinchMx0:0,pinchMy0:0,
 
-  MIN_R:30,MAX_R:4000,
+  MIN_SCALE:0.04,MAX_SCALE:30,
 
   init(imgUrl,type){
     this.type=type||'AIR_PISTOL_10M';
@@ -2585,10 +2600,16 @@ const AlignEng={
     const canvas=document.getElementById('align-canvas');if(!canvas)return;
     const dpr=window.devicePixelRatio||1;
     const cssW=canvas.width/dpr,cssH=canvas.height/dpr;
-    // Center rings on the canvas centre by default
-    this.cx=cssW/2;this.cy=cssH/2;
-    // Scale rings so outer ring fills ~70% of the shorter dimension
-    this.radius=Math.min(cssW,cssH)*0.38;
+    // Fixed rings always at canvas centre — never move
+    this.fixedCx=cssW/2;this.fixedCy=cssH/2;
+    // Fixed outer ring occupies ~42% of the shorter dimension
+    this.fixedR=Math.min(cssW,cssH)*0.42;
+    // Fit image to canvas (object-fit: contain style) so user can see the whole target
+    const imgAsp=this.imgW/this.imgH,canAsp=cssW/cssH;
+    const fitScale=imgAsp>canAsp?cssW/this.imgW:cssH/this.imgH;
+    this.scale=fitScale*0.92;
+    this.tx=(cssW-this.imgW*this.scale)/2;
+    this.ty=(cssH-this.imgH*this.scale)/2;
   },
   redraw(){
     const canvas=document.getElementById('align-canvas');if(!canvas)return;
@@ -2598,65 +2619,90 @@ const AlignEng={
     const cssW=cw/dpr,cssH=ch/dpr;
     ctx.setTransform(dpr,0,0,dpr,0,0);
     ctx.clearRect(0,0,cssW,cssH);
-    // dim background
     ctx.fillStyle='#050810';ctx.fillRect(0,0,cssW,cssH);
-    // draw image fitted to canvas
+    // ── Draw IMAGE with pan+zoom transform at 70% opacity ──
+    // Rings are drawn after at full 100% opacity so they always dominate.
     if(this.img){
-      const iA=this.imgW/this.imgH,cA=cssW/cssH;
-      let rW,rH,rX,rY;
-      if(iA>cA){rW=cssW;rH=cssW/iA;rX=0;rY=(cssH-rH)/2;}
-      else{rH=cssH;rW=cssH*iA;rX=(cssW-rW)/2;rY=0;}
-      ctx.drawImage(this.img,rX,rY,rW,rH);
-      this._imgRect={rX,rY,rW,rH};
+      ctx.save();
+      ctx.globalAlpha=0.72; // image at ~70% so rings pop through clearly
+      ctx.translate(this.tx,this.ty);
+      ctx.scale(this.scale,this.scale);
+      ctx.drawImage(this.img,0,0);
+      ctx.restore();
+      ctx.globalAlpha=1.0; // restore full opacity for rings
     }
-    // overlay dim
-    ctx.fillStyle='rgba(5,8,16,0.38)';ctx.fillRect(0,0,cssW,cssH);
-    // draw ISSF rings
+    // Targeted dim only outside the outer ring circle — keeps target zone clear
+    ctx.save();
+    ctx.globalAlpha=0.22;
+    ctx.fillStyle='#050810';ctx.fillRect(0,0,cssW,cssH);
+    // Cut out the ring area so it stays bright (composite trick)
+    ctx.globalCompositeOperation='destination-out';
+    ctx.beginPath();ctx.arc(this.fixedCx,this.fixedCy,this.fixedR*1.02,0,Math.PI*2);
+    ctx.fillStyle='rgba(0,0,0,1)';ctx.fill();
+    ctx.restore();
+    // ── Draw FIXED ISSF rings (always at fixedCx, fixedCy) ──
     const spec=getISSFTargetSpec(this.type);
-    const outerR=this.radius;
-    for(let i=0;i<10;i++){
+    const outerR=this.fixedR;
+    // Filled semi-transparent ring zones to help alignment
+    for(let i=9;i>=0;i--){
       const r=outerR*(spec.steps[i]/spec.outerRMm);
-      const isOuter=(i===0);
-      ctx.beginPath();ctx.arc(this.cx,this.cy,r,0,Math.PI*2);
-      ctx.strokeStyle=isOuter?'rgba(0,255,136,0.95)':'rgba(0,255,136,0.55)';
-      ctx.lineWidth=isOuter?2.5:1.2;ctx.stroke();
+      ctx.beginPath();ctx.arc(this.fixedCx,this.fixedCy,r,0,Math.PI*2);
+      ctx.strokeStyle=i===0?'rgba(0,255,136,1)':'rgba(0,255,136,0.55)';
+      ctx.lineWidth=i===0?3:1.2;ctx.stroke();
     }
+    // Outer boundary glow pulse effect
+    ctx.beginPath();ctx.arc(this.fixedCx,this.fixedCy,outerR,0,Math.PI*2);
+    ctx.strokeStyle='rgba(0,255,136,0.25)';ctx.lineWidth=8;ctx.stroke();
     // Centre crosshair
-    const cs=14;
-    ctx.strokeStyle='rgba(0,255,136,0.9)';ctx.lineWidth=1.8;
-    ctx.beginPath();ctx.moveTo(this.cx-cs,this.cy);ctx.lineTo(this.cx+cs,this.cy);
-    ctx.moveTo(this.cx,this.cy-cs);ctx.lineTo(this.cx,this.cy+cs);ctx.stroke();
-    // Centre circle
-    ctx.beginPath();ctx.arc(this.cx,this.cy,4,0,Math.PI*2);
-    ctx.fillStyle='rgba(0,255,136,0.9)';ctx.fill();
-    // Ring labels in the outer rings
+    const cs=18;
+    ctx.strokeStyle='rgba(0,255,136,0.95)';ctx.lineWidth=2;
+    ctx.beginPath();
+    ctx.moveTo(this.fixedCx-cs,this.fixedCy);ctx.lineTo(this.fixedCx+cs,this.fixedCy);
+    ctx.moveTo(this.fixedCx,this.fixedCy-cs);ctx.lineTo(this.fixedCx,this.fixedCy+cs);
+    ctx.stroke();
+    // Centre dot
+    ctx.beginPath();ctx.arc(this.fixedCx,this.fixedCy,4.5,0,Math.PI*2);
+    ctx.fillStyle='rgba(0,255,136,0.95)';ctx.fill();
+    // Ring score labels (1–8) left & right
     const fs=Math.max(10,outerR*0.09);
     ctx.font=`bold ${fs}px monospace`;ctx.textAlign='center';ctx.textBaseline='middle';
-    ctx.fillStyle='rgba(0,255,136,0.65)';
+    ctx.fillStyle='rgba(0,255,136,0.7)';
     for(let i=0;i<8;i++){
       const rOut=outerR*(spec.steps[i]/spec.outerRMm);
       const rIn=outerR*(spec.steps[i+1]/spec.outerRMm);
       const rMid=(rOut+rIn)/2;
       const score=i+1;
-      ctx.fillText(score,this.cx-rMid,this.cy);
-      ctx.fillText(score,this.cx+rMid,this.cy);
+      ctx.fillText(score,this.fixedCx-rMid,this.fixedCy);
+      ctx.fillText(score,this.fixedCx+rMid,this.fixedCy);
     }
-    // Instruction hint
+    // Instruction hint at bottom
     ctx.font='bold 11px var(--head, monospace)';ctx.textAlign='center';ctx.textBaseline='top';
-    ctx.fillStyle='rgba(0,255,136,0.5)';
-    ctx.fillText('DRAG to move  •  PINCH to resize',cssW/2,cssH-28);
+    ctx.fillStyle='rgba(0,255,136,0.55)';
+    ctx.fillText('DRAG image to move  •  PINCH to zoom',cssW/2,cssH-28);
+    // Update zoom label
+    updateAlignZoom();
   },
-  // Compute alignment data in image pixel space
+  // Zoom image around a canvas-space pivot point
+  _zoomAround(pivot_x,pivot_y,factor){
+    const ns=Math.max(this.MIN_SCALE,Math.min(this.MAX_SCALE,this.scale*factor));
+    this.tx=pivot_x-(pivot_x-this.tx)*(ns/this.scale);
+    this.ty=pivot_y-(pivot_y-this.ty)*(ns/this.scale);
+    this.scale=ns;
+  },
+  // Compute alignment data in IMAGE pixel space (consumed by scoreShots/calcStats/drawOverlay)
+  // Math: rings are fixed at (fixedCx, fixedCy) in canvas CSS px.
+  // Image transform: canvas_px = image_px * scale + (tx, ty)
+  // => image_px = (canvas_px - tx) / scale
+  // Target centre in image px = ((fixedCx - tx)/scale, (fixedCy - ty)/scale)
+  // fixedR canvas px = fixedR/scale image px = spec.outerRMm mm
+  // => pxMm (image px per mm) = (fixedR / scale) / spec.outerRMm
   getAlignData(){
     const canvas=document.getElementById('align-canvas');
-    if(!canvas||!this.img||!this._imgRect)return null;
-    const dpr=window.devicePixelRatio||1;
-    const{rX,rY,rW,rH}=this._imgRect;
-    const displayScale=this.imgW/rW; // image px per CSS px
-    const imgCx=(this.cx-rX)*displayScale;
-    const imgCy=(this.cy-rY)*displayScale;
+    if(!canvas||!this.img)return null;
     const spec=getISSFTargetSpec(this.type);
-    const pxMm=this.radius*displayScale/spec.outerRMm;
+    const imgCx=(this.fixedCx-this.tx)/this.scale;
+    const imgCy=(this.fixedCy-this.ty)/this.scale;
+    const pxMm=(this.fixedR/this.scale)/spec.outerRMm;
     return{cx:imgCx,cy:imgCy,pxMm,type:this.type};
   }
 };
@@ -2672,7 +2718,7 @@ function pgAlign(){
     </button>
     <div style="flex:1">
       <div style="font-family:var(--head);font-size:.75rem;letter-spacing:.2em;color:var(--green)">ALIGN TARGET</div>
-      <div style="font-family:var(--head);font-size:.52rem;letter-spacing:.12em;color:var(--text3);margin-top:1px">Match green rings to target</div>
+      <div style="font-family:var(--head);font-size:.52rem;letter-spacing:.12em;color:var(--text3);margin-top:1px">Zoom &amp; drag IMAGE to match target to fixed rings</div>
     </div>
     <!-- Rifle / Pistol toggle (top right) -->
     <div style="display:flex;gap:6px">
@@ -2686,12 +2732,20 @@ function pgAlign(){
   <!-- Canvas fills remaining space -->
   <div id="align-wrap" style="flex:1;position:relative;overflow:hidden;min-height:0;touch-action:none">
     <canvas id="align-canvas" style="display:block;width:100%;height:100%;touch-action:none"></canvas>
-    <!-- Size hint badges -->
-    <div style="position:absolute;top:10px;left:50%;transform:translateX(-50%);display:flex;gap:8px;pointer-events:none">
-      <div style="background:rgba(0,0,0,.65);border:1px solid rgba(0,255,136,.3);border-radius:20px;padding:4px 12px;font-family:var(--head);font-size:.52rem;letter-spacing:.1em;color:rgba(0,255,136,.8)">
-        Outer ring = ring&nbsp;1
+    <!-- Top badges row -->
+    <div style="position:absolute;top:10px;left:0;right:0;display:flex;justify-content:center;gap:8px;pointer-events:none">
+      <div style="background:rgba(0,0,0,.72);border:1px solid rgba(0,255,136,.35);border-radius:20px;padding:4px 13px;font-family:var(--head);font-size:.52rem;letter-spacing:.1em;color:rgba(0,255,136,.85);white-space:nowrap">
+        🔒 Rings fixed · move the photo beneath them
       </div>
     </div>
+    <!-- Zoom indicator bottom-left -->
+    <div style="position:absolute;bottom:12px;left:12px;background:rgba(0,0,0,.65);border:1px solid rgba(255,255,255,.18);border-radius:8px;padding:4px 10px;font-family:var(--mono);font-size:.65rem;color:rgba(255,255,255,.55);pointer-events:none">
+      <span id="align-zoom-lbl">100%</span>
+    </div>
+    <!-- Reset / Fit button bottom-right -->
+    <button onclick="AlignEng._fitInit();AlignEng.redraw();updateAlignZoom()" style="position:absolute;bottom:12px;right:12px;background:rgba(0,0,0,.65);border:1px solid rgba(0,255,136,.35);border-radius:8px;padding:6px 14px;font-family:var(--head);font-size:.58rem;letter-spacing:.1em;color:rgba(0,255,136,.75);cursor:pointer;touch-action:manipulation">
+      ↺ RESET FIT
+    </button>
   </div>
   <!-- Bottom action bar -->
   <div style="flex-shrink:0;padding:14px 16px calc(14px + env(safe-area-inset-bottom,0px));background:rgba(5,8,16,.97);border-top:1px solid rgba(0,255,136,0.15);display:flex;flex-direction:column;gap:10px">
@@ -2699,12 +2753,12 @@ function pgAlign(){
       <div style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:8px;text-align:center">
         <div style="font-family:var(--head);font-size:.46rem;letter-spacing:.12em;color:var(--text3);margin-bottom:3px">DRAG</div>
         <div style="font-size:.75rem">☝️</div>
-        <div style="font-family:var(--head);font-size:.46rem;color:var(--text3)">Move rings</div>
+        <div style="font-family:var(--head);font-size:.46rem;color:var(--text3)">Move image</div>
       </div>
       <div style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:8px;text-align:center">
         <div style="font-family:var(--head);font-size:.46rem;letter-spacing:.12em;color:var(--text3);margin-bottom:3px">PINCH</div>
         <div style="font-size:.75rem">🤏</div>
-        <div style="font-family:var(--head);font-size:.46rem;color:var(--text3)">Resize rings</div>
+        <div style="font-family:var(--head);font-size:.46rem;color:var(--text3)">Zoom image</div>
       </div>
       <div style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:8px;text-align:center">
         <div style="font-family:var(--head);font-size:.46rem;letter-spacing:.12em;color:var(--text3);margin-bottom:3px">CONFIRM</div>
@@ -2735,6 +2789,11 @@ function setAlignType(t){
   AlignEng.redraw();
 }
 
+function updateAlignZoom(){
+  const el=document.getElementById('align-zoom-lbl');
+  if(el)el.textContent=Math.round(AlignEng.scale*100)+'%';
+}
+
 function setupAlignEvents(){
   const canvas=document.getElementById('align-canvas');
   const wrap=document.getElementById('align-wrap');
@@ -2752,27 +2811,32 @@ function setupAlignEvents(){
   const pdist=(ts)=>Math.hypot(ts[0].clientX-ts[1].clientX,ts[0].clientY-ts[1].clientY);
   const pmid=(ts,r)=>[(ts[0].clientX+ts[1].clientX)/2-r.left,(ts[0].clientY+ts[1].clientY)/2-r.top];
 
-  // Mouse
+  // ── MOUSE — pan image on drag, zoom on wheel ──
   canvas.addEventListener('mousedown',e=>{
-    const r=rect();AlignEng.isPan=true;
-    AlignEng.panSx=e.clientX-r.left;AlignEng.panSy=e.clientY-r.top;
-    AlignEng.panCx0=AlignEng.cx;AlignEng.panCy0=AlignEng.cy;e.preventDefault();
+    AlignEng.isPan=true;
+    AlignEng.panSx=e.clientX-rect().left;AlignEng.panSy=e.clientY-rect().top;
+    AlignEng.panTx0=AlignEng.tx;AlignEng.panTy0=AlignEng.ty;
+    e.preventDefault();
   });
   canvas.addEventListener('mousemove',e=>{
     if(!AlignEng.isPan)return;
     const r=rect();
-    AlignEng.cx=AlignEng.panCx0+(e.clientX-r.left-AlignEng.panSx);
-    AlignEng.cy=AlignEng.panCy0+(e.clientY-r.top-AlignEng.panSy);
+    AlignEng.tx=AlignEng.panTx0+(e.clientX-r.left-AlignEng.panSx);
+    AlignEng.ty=AlignEng.panTy0+(e.clientY-r.top-AlignEng.panSy);
     AlignEng.redraw();e.preventDefault();
   });
-  canvas.addEventListener('mouseup',()=>AlignEng.isPan=false);
+  canvas.addEventListener('mouseup',()=>{AlignEng.isPan=false;});
+  canvas.addEventListener('mouseleave',()=>{AlignEng.isPan=false;});
+  // Mouse wheel: zoom image around cursor
   canvas.addEventListener('wheel',e=>{
+    const r=rect();
+    const px=e.clientX-r.left,py=e.clientY-r.top;
     const f=e.deltaY<0?1.06:0.94;
-    AlignEng.radius=Math.max(AlignEng.MIN_R,Math.min(AlignEng.MAX_R,AlignEng.radius*f));
+    AlignEng._zoomAround(px,py,f);
     AlignEng.redraw();e.preventDefault();
   },{passive:false});
 
-  // Touch
+  // ── TOUCH — one finger = pan image, two fingers = pinch zoom ──
   canvas.addEventListener('touchstart',e=>{
     e.preventDefault();
     const r=rect();const ts=[...e.touches];
@@ -2780,13 +2844,13 @@ function setupAlignEvents(){
       AlignEng.isPan=true;AlignEng.pinchDist0=0;
       const[sx,sy]=tpos(ts[0],r);
       AlignEng.panSx=sx;AlignEng.panSy=sy;
-      AlignEng.panCx0=AlignEng.cx;AlignEng.panCy0=AlignEng.cy;
+      AlignEng.panTx0=AlignEng.tx;AlignEng.panTy0=AlignEng.ty;
     } else if(ts.length===2){
       AlignEng.isPan=false;
-      AlignEng.pinchDist0=pdist(ts);AlignEng.pinchRad0=AlignEng.radius;
+      AlignEng.pinchDist0=pdist(ts);AlignEng.pinchScale0=AlignEng.scale;
       const[mx,my]=pmid(ts,r);
-      AlignEng.pinchSx0=mx;AlignEng.pinchSy0=my;
-      AlignEng.pinchCx0=AlignEng.cx;AlignEng.pinchCy0=AlignEng.cy;
+      AlignEng.pinchMx0=mx;AlignEng.pinchMy0=my;
+      AlignEng.pinchTx0=AlignEng.tx;AlignEng.pinchTy0=AlignEng.ty;
     }
   },{passive:false});
   canvas.addEventListener('touchmove',e=>{
@@ -2794,16 +2858,17 @@ function setupAlignEvents(){
     const r=rect();const ts=[...e.touches];
     if(ts.length===1&&AlignEng.isPan){
       const[sx,sy]=tpos(ts[0],r);
-      AlignEng.cx=AlignEng.panCx0+(sx-AlignEng.panSx);
-      AlignEng.cy=AlignEng.panCy0+(sy-AlignEng.panSy);
+      AlignEng.tx=AlignEng.panTx0+(sx-AlignEng.panSx);
+      AlignEng.ty=AlignEng.panTy0+(sy-AlignEng.panSy);
       AlignEng.redraw();
     } else if(ts.length===2&&AlignEng.pinchDist0>0){
       const nd=pdist(ts);
       const[mx,my]=pmid(ts,r);
-      AlignEng.radius=Math.max(AlignEng.MIN_R,Math.min(AlignEng.MAX_R,AlignEng.pinchRad0*(nd/AlignEng.pinchDist0)));
-      // Pan centre along with pinch midpoint movement
-      AlignEng.cx=AlignEng.pinchCx0+(mx-AlignEng.pinchSx0);
-      AlignEng.cy=AlignEng.pinchCy0+(my-AlignEng.pinchSy0);
+      const newScale=Math.max(AlignEng.MIN_SCALE,Math.min(AlignEng.MAX_SCALE,AlignEng.pinchScale0*(nd/AlignEng.pinchDist0)));
+      // Zoom around the initial pinch midpoint, then pan with midpoint movement
+      AlignEng.tx=AlignEng.pinchMx0-(AlignEng.pinchMx0-AlignEng.pinchTx0)*(newScale/AlignEng.pinchScale0)+(mx-AlignEng.pinchMx0);
+      AlignEng.ty=AlignEng.pinchMy0-(AlignEng.pinchMy0-AlignEng.pinchTy0)*(newScale/AlignEng.pinchScale0)+(my-AlignEng.pinchMy0);
+      AlignEng.scale=newScale;
       AlignEng.redraw();
     }
   },{passive:false});
@@ -2816,6 +2881,14 @@ function confirmAlign(){
     // No image loaded yet — just proceed with defaults
     App.alignData=null;
   } else {
+    // ── POINT 12 (Optional Advanced Upgrade) ──────────────────────────────
+    // For perfect scoring regardless of camera angle, a 4-point perspective
+    // correction (homography warp) could be applied here before storing
+    // alignData. The user would tap 4 corners of the physical target,
+    // the image would be de-warped, and the scoring geometry would then be
+    // as accurate as an electronic target even for angled photos.
+    // Implement with: getPerspectiveTransform() + warpPerspective() pattern.
+    // ─────────────────────────────────────────────────────────────────────
     App.alignData=data;
     // Sync type to cfg
     App.cfg=Object.assign({},App.cfg,{type:data.type});
@@ -3025,6 +3098,14 @@ function openEditor(){
 async function applyEdits(){
   if(!Ed.img||!Ed.shots.length){
     toast('Place at least one shot first');return;
+  }
+  // Point 9: Warn if scoring a real photo without alignment data.
+  // Demo images are synthetically centred so the fallback is safe there.
+  // For any real uploaded/camera image, alignment must have been confirmed.
+  const isDemo=App.results?.id&&String(App.results.id).startsWith('demo');
+  if(!App.alignData&&!isDemo){
+    // Still allow scoring but warn the user — scores may be inaccurate
+    toast('⚠️ No alignment data — scores may be inaccurate. Use RE-ALIGN first.',4500);
   }
   const canvas=document.createElement('canvas');
   canvas.width=Ed.imgW;canvas.height=Ed.imgH;
