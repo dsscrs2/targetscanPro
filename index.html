@@ -2252,12 +2252,32 @@ function exportUserData(id,name){
   const prefs=JSON.parse(localStorage.getItem('ts_prefs_'+id)||'{}');
   const payload={version:1,exported:new Date().toISOString(),shooter:name,sessions,prefs};
   const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
-  const filename=`airscan_${name.replace(/\s+/g,'_')}_backup_${new Date().toISOString().slice(0,10)}.json`;
-  const file=new File([blob],filename,{type:'application/json'});
-  if(navigator.share&&navigator.canShare&&navigator.canShare({files:[file]})){
-    navigator.share({title:`AirScan Backup — ${name}`,files:[file]}).catch(()=>_fallbackDl(URL.createObjectURL(blob),filename));
-  } else {_fallbackDl(URL.createObjectURL(blob),filename);}
-  toast('Backup saved for '+name+'!');
+  const filename=`airscan_${name.replace(/[^a-z0-9]/gi,'_')}_backup_${new Date().toISOString().slice(0,10)}.json`;
+  const doFallback=()=>{_fallbackDl(URL.createObjectURL(blob),filename);};
+  const tryShare=async()=>{
+    const file=new File([blob],filename,{type:'application/json'});
+    if(navigator.share&&navigator.canShare&&navigator.canShare({files:[file]})){
+      try{
+        await navigator.share({title:`AirScan Backup — ${name}`,files:[file]});
+        toast('Backup shared for '+name+'!');
+      } catch(e){
+        // AbortError = user dismissed share sheet — don't fallback to download
+        if(e.name!=='AbortError')doFallback();
+        // else: user cancelled, do nothing
+      }
+    } else if(navigator.share){
+      // Share supported but file sharing not (some desktop browsers)
+      try{
+        await navigator.share({title:`AirScan Backup — ${name}`,text:JSON.stringify(payload,null,2)});
+        toast('Backup shared for '+name+'!');
+      } catch(e){if(e.name!=='AbortError')doFallback();}
+    } else {
+      // No share API — direct download
+      doFallback();
+      toast('Backup saved for '+name+'!');
+    }
+  };
+  tryShare();
 }
 // ══════════════════════════════════════════════════════════════════
 function pgGuide(){
@@ -2542,27 +2562,66 @@ function exportData(){
   exportUserData(DB._uid,name);
 }
 function importData(){
-  const inp=document.createElement('input');inp.type='file';inp.accept='.json,application/json';
+  const inp=document.createElement('input');
+  inp.type='file';inp.accept='.json,application/json';
+  inp.style.display='none';
+  // Must be in DOM for Firefox + iOS PWA to reliably fire onchange
+  document.body.appendChild(inp);
+
   inp.onchange=e=>{
-    const f=e.target.files[0];if(!f)return;
+    const f=e.target.files[0];
+    document.body.removeChild(inp); // clean up DOM
+    if(!f)return;
+    if(!f.name.endsWith('.json')&&f.type!=='application/json'){
+      toast('Please select a .json backup file');return;
+    }
+    if(f.size>10*1024*1024){toast('Backup file too large (max 10 MB)');return;}
     const reader=new FileReader();
     reader.onload=ev=>{
       try{
-        const d=JSON.parse(ev.target.result);
-        if(!d.sessions||!Array.isArray(d.sessions))throw new Error('Invalid backup file');
+        const raw=ev.target.result;
+        let d;
+        try{d=JSON.parse(raw);}
+        catch{toast('File is not valid JSON — cannot restore');return;}
+        // Structure validation
+        if(!d||typeof d!=='object'){toast('Invalid backup: not an object');return;}
+        if(!Array.isArray(d.sessions)){toast('Invalid backup: missing sessions array');return;}
+        if(d.version&&d.version!==1){toast(`Unsupported backup version: ${d.version}`);return;}
+        // Point 7: Guard against maliciously large or corrupted backup files
+        if(d.sessions.length>5000){toast('Backup too large (max 5000 sessions)');return;}
+        // Filter out sessions missing critical fields to avoid corrupt data
+        const valid=d.sessions.filter(s=>s&&typeof s.id!=='undefined'&&Array.isArray(s.scored));
+        const invalid=d.sessions.length-valid.length;
         const existing=DB.sessions;
         const existingIds=new Set(existing.map(s=>s.id));
-        const newSessions=d.sessions.filter(s=>!existingIds.has(s.id));
-        // Only prepend new sessions — never overwrite existing ones
+        const newSessions=valid.filter(s=>!existingIds.has(s.id));
+        const dupes=valid.length-newSessions.length;
+        // Prepend new sessions — never overwrite existing ones
+        // DB.sessions setter writes to localStorage immediately — no separate save() needed
         DB.sessions=[...newSessions,...existing];
-        // Only restore prefs if user has no sessions yet (fresh profile)
+        // Restore prefs only if target profile is empty (fresh profile)
         if(d.prefs&&existing.length===0)DB.prefs=d.prefs;
-        toast(`Restored ${newSessions.length} new session${newSessions.length!==1?'s':''} (${d.sessions.length-newSessions.length} already existed)`);
-        render();
-      }catch{toast('Invalid backup file — could not restore');}
+        const parts=[];
+        if(newSessions.length)parts.push(`${newSessions.length} new session${newSessions.length!==1?'s':''} restored ✔`);
+        if(dupes)parts.push(`${dupes} already existed`);
+        if(invalid)parts.push(`${invalid} skipped (corrupt)`);
+        toast(parts.join(' · ')||'Nothing new to restore',3200);
+        // Point 9: Navigate to history so user immediately sees restored sessions
+        if(newSessions.length>0){
+          setTimeout(()=>navTo('history'),500);
+        } else {
+          render();
+        }
+      } catch(err){
+        console.error('importData error:',err);
+        toast('Could not restore — unexpected error');
+      }
     };
+    reader.onerror=()=>toast('Could not read file');
     reader.readAsText(f);
   };
+  // oncancel fires in modern browsers when user dismisses picker without selecting
+  inp.oncancel=()=>{if(inp.parentNode)document.body.removeChild(inp);};
   inp.click();
 }
 
@@ -3044,37 +3103,82 @@ function dlImg(url){
   const filename=`airscan_${Date.now()}.jpg`;
   fetch(url).then(r=>r.blob()).then(blob=>{
     const file=new File([blob],filename,{type:'image/jpeg'});
-    if(navigator.share&&navigator.canShare&&navigator.canShare({files:[file]})){
-      navigator.share({title:'AirScan Pro — Shot Analysis',text:'My shot analysis from AirScan Pro',files:[file]})
-        .catch(e=>{if(e.name!=='AbortError')_fallbackDl(url,filename);});
-    } else if(navigator.share){
-      // Share URL fallback (no file support)
-      const objUrl=URL.createObjectURL(blob);
-      navigator.share({title:'AirScan Pro — Shot Analysis',url:objUrl})
-        .catch(()=>_fallbackDl(url,filename));
-    } else {
-      _fallbackDl(url,filename);
-    }
+    const tryShare=async()=>{
+      if(navigator.share&&navigator.canShare&&navigator.canShare({files:[file]})){
+        try{await navigator.share({title:'AirScan Pro — Shot Analysis',text:'My shot analysis from AirScan Pro',files:[file]});}
+        catch(e){if(e.name!=='AbortError')_fallbackDl(URL.createObjectURL(blob),filename);}
+      } else if(navigator.share){
+        // Share URL fallback (no file support) — revoke after share resolves
+        const objUrl=URL.createObjectURL(blob);
+        try{await navigator.share({title:'AirScan Pro — Shot Analysis',url:objUrl});}
+        catch(e){if(e.name!=='AbortError')_fallbackDl(URL.createObjectURL(blob),filename);}
+        finally{URL.revokeObjectURL(objUrl);}
+      } else {
+        _fallbackDl(URL.createObjectURL(blob),filename);
+      }
+    };
+    tryShare();
   }).catch(()=>_fallbackDl(url,filename));
 }
 function dlCSV(){
   const r=App.results;if(!r?.scored?.length){toast('No data');return;}
-  const csv=['Shot,X,Y,Score,Decimal,Distance_px',...r.scored.map(s=>`${s.id},${~~s.cx},${~~s.cy},${s.score},${s.decimal},${s.dist_px.toFixed(1)}`)].join('\n');
-  const blob=new Blob([csv],{type:'text/csv'});
+  const cfg=r.cfg||App.cfg||{};
+  const spec=getISSFTargetSpec(cfg.type||'AIR_PISTOL_10M');
+  const pxMm=r.stats?.pxMm||1;
+  const dt=r.ts?new Date(r.ts).toISOString().slice(0,19).replace('T',' '):'';
+  // Session metadata rows followed by a blank line, then column headers
+  // BOM (\uFEFF) at the very start makes Excel auto-detect UTF-8 correctly
+  const rows=[
+    '\uFEFF# AirScan Pro — Shot Export',
+    `# Date,${dt}`,
+    `# Shooter,${Users.current?.name||''}`,
+    `# Target,${cfg.type||''}`,
+    `# Caliber,${cfg.caliber||''}`,
+    `# Scoring,${cfg.mode||''}`,
+    `# Total Score,${r.stats?.totalScore??''}/${r.stats?.maxScore??''}`,
+    `# Shots,${r.scored.length}`,
+    `# ES (mm),${r.stats?.extremeSpreadMm?.toFixed(2)||''}`,
+    `# MR (mm),${r.stats?.meanRadMm?.toFixed(2)||''}`,
+    '',
+    'Shot,X_px,Y_px,Score,Decimal,Distance_px,Distance_mm,MPI_offset_X_mm,MPI_offset_Y_mm',
+    ...r.scored.map(s=>{
+      const distMm=(s.dist_px/pxMm).toFixed(2);
+      const mpiOffX=r.stats?((s.cx-r.stats.mpiX)/pxMm).toFixed(2):'';
+      const mpiOffY=r.stats?((s.cy-r.stats.mpiY)/pxMm).toFixed(2):'';
+      return`${s.id},${~~s.cx},${~~s.cy},${s.score},${s.decimal},${s.dist_px.toFixed(1)},${distMm},${mpiOffX},${mpiOffY}`;
+    })
+  ];
+  const csv=rows.join('\n');
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
   const filename=`airscan_shots_${Date.now()}.csv`;
-  const file=new File([blob],filename,{type:'text/csv'});
-  if(navigator.share&&navigator.canShare&&navigator.canShare({files:[file]})){
-    navigator.share({title:'AirScan Pro — Shot Data',text:'My shot data export from AirScan Pro',files:[file]})
-      .catch(e=>{if(e.name!=='AbortError')_fallbackDl(URL.createObjectURL(blob),filename);});
-  } else if(navigator.share){
-    navigator.share({title:'AirScan Pro — Shot Data',text:csv})
-      .catch(()=>_fallbackDl(URL.createObjectURL(blob),filename));
-  } else {
-    _fallbackDl(URL.createObjectURL(blob),filename);
-  }
+  // Share as file (Android/iOS), then fallback to text share, then download
+  const tryShare=async()=>{
+    const file=new File([blob],filename,{type:'text/csv'});
+    if(navigator.share&&navigator.canShare&&navigator.canShare({files:[file]})){
+      try{await navigator.share({title:'AirScan Pro — Shot Data',files:[file]});}
+      catch(e){if(e.name!=='AbortError')_fallbackDl(URL.createObjectURL(blob),filename);}
+    } else if(navigator.share){
+      // Platform supports share but not file share — share as text
+      try{await navigator.share({title:'AirScan Pro — Shot Data',text:csv});}
+      catch(e){if(e.name!=='AbortError')_fallbackDl(URL.createObjectURL(blob),filename);}
+    } else {
+      _fallbackDl(URL.createObjectURL(blob),filename);
+    }
+  };
+  tryShare();
 }
 function _fallbackDl(url,filename){
-  const a=document.createElement('a');a.href=url;a.download=filename;a.click();
+  // Must append to DOM for Firefox + Android WebView reliability
+  const a=document.createElement('a');
+  a.href=url;a.download=filename;a.style.display='none';
+  document.body.appendChild(a);
+  a.click();
+  // Remove and revoke after a short delay to let the download start
+  setTimeout(()=>{
+    document.body.removeChild(a);
+    // Only revoke blob: URLs we own — not external URLs passed in
+    if(url.startsWith('blob:'))URL.revokeObjectURL(url);
+  },250);
   toast('File saved!');
 }
 function printReport(){
