@@ -2553,185 +2553,131 @@ function importData(){
 }
 
 // ══════════════════════════════════════════════════════════════════
-//  CAMERA — DOM injection approach (iOS Safari safe)
+//  CAMERA  (iOS Safari safe)
 //
-//  The camera UI is injected directly into document.body and the
-//  video element is created programmatically. This BYPASSES render()
-//  entirely — which is required because on iOS Safari, render() can
-//  silently fail when a camera stream is active, leaving the previous
-//  page visible even though the stream is running (seen as the red
-//  camera dot in Safari's address bar with the home screen still showing).
+//  Strategy: inject HTML string into #root synchronously, then
+//  immediately query #camvid and set srcObject in the same tick.
+//  play() is called on loadedmetadata — the only reliable pattern
+//  on iOS Safari. All DOM creation is deferred AFTER innerHTML so
+//  a throw in buildCameraOverlaySVG can never block the video.
 // ══════════════════════════════════════════════════════════════════
-
-function buildCameraUI(stream){
-  // Remove any stale camera UI from a previous session
-  const old=document.getElementById('cam-ui');
-  if(old)old.remove();
-
-  const t=App.cfg?.type||'AIR_PISTOL_10M';
-  const disciplines=[['AIR_RIFLE_10M','10m RIFLE'],['AIR_PISTOL_10M','10m PISTOL']];
-
-  // Outer wrapper
-  const wrap=document.createElement('div');
-  wrap.id='cam-ui';
-  wrap.style.cssText='position:fixed;inset:0;background:#000;display:flex;flex-direction:column;z-index:9000;font-family:var(--head)';
-
-  // ── Viewfinder area ──
-  const vfArea=document.createElement('div');
-  vfArea.style.cssText='flex:1;position:relative;overflow:hidden;min-height:0';
-
-  // Video element — created via JS so srcObject is set before first paint
-  const vid=document.createElement('video');
-  vid.id='camvid';
-  vid.setAttribute('autoplay','');
-  vid.setAttribute('playsinline','');   // REQUIRED on iOS — inline playback
-  vid.setAttribute('muted','');
-  vid.setAttribute('webkit-playsinline',''); // older iOS compatibility
-  vid.style.cssText='width:100%;height:100%;object-fit:cover;display:block';
-  vfArea.appendChild(vid);
-
-  // Top bar
-  const topBar=document.createElement('div');
-  topBar.style.cssText='position:absolute;top:0;left:0;right:0;padding:max(14px,env(safe-area-inset-top,14px)) 16px 10px;display:flex;align-items:center;gap:12px;background:linear-gradient(rgba(0,0,0,.75),transparent);z-index:10';
-  topBar.innerHTML=`
-    <button onclick="stopCam()" style="width:44px;height:44px;border-radius:50%;background:rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.3);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;touch-action:manipulation">
-      <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="15 18 9 12 15 6"/></svg>
-    </button>
-    <span style="font-size:.72rem;letter-spacing:.2em;color:#fff;flex:1">CAMERA</span>
-    <div id="cam-chips" style="display:flex;gap:8px"></div>`;
-  vfArea.appendChild(topBar);
-
-  // Ring overlay
-  const overlay=document.createElement('div');
-  overlay.id='cam-overlay';
-  overlay.style.cssText='position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none';
-  overlay.innerHTML=buildCameraOverlaySVG(t);
-  vfArea.appendChild(overlay);
-
-  // Align hint
-  const hint=document.createElement('div');
-  hint.style.cssText='position:absolute;bottom:16px;left:0;right:0;text-align:center;pointer-events:none';
-  hint.innerHTML=`<span style="font-size:.58rem;letter-spacing:.13em;color:rgba(255,255,255,.45);background:rgba(0,0,0,.45);padding:4px 12px;border-radius:20px">ALIGN TARGET TO GREEN RINGS</span>`;
-  vfArea.appendChild(hint);
-
-  wrap.appendChild(vfArea);
-
-  // ── Shutter bar ──
-  const shutterBar=document.createElement('div');
-  shutterBar.style.cssText='flex-shrink:0;height:130px;background:rgba(0,0,0,.92);display:flex;align-items:center;justify-content:center;gap:52px;border-top:1px solid rgba(255,255,255,.08);padding-bottom:env(safe-area-inset-bottom,0px)';
-  shutterBar.innerHTML=`
-    <button onclick="stopCam()" style="width:48px;height:48px;border-radius:50%;background:rgba(255,255,255,.12);border:1.5px solid rgba(255,255,255,.35);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;touch-action:manipulation">
-      <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="15 18 9 12 15 6"/></svg>
-    </button>
-    <button id="shutter-btn" onclick="capturePhoto()" style="width:80px;height:80px;border-radius:50%;background:transparent;border:5px solid #fff;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:transform .1s;-webkit-tap-highlight-color:transparent;touch-action:manipulation">
-      <div style="width:64px;height:64px;border-radius:50%;background:#fff"></div>
-    </button>
-    <div style="width:48px;height:48px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px">
-      <div style="font-size:.4rem;letter-spacing:.1em;color:rgba(255,255,255,.35)">HOLD</div>
-      <div style="font-size:.4rem;letter-spacing:.1em;color:rgba(255,255,255,.35)">STEADY</div>
-    </div>`;
-  wrap.appendChild(shutterBar);
-
-  // Inject into body FIRST, then attach stream — element must be in DOM for iOS
-  document.body.appendChild(wrap);
-
-  // Build discipline chips now that the DOM is ready
-  const chipsEl=document.getElementById('cam-chips');
-  if(chipsEl){
-    disciplines.forEach(([v,l])=>{
-      const on=v===t;
-      const btn=document.createElement('button');
-      btn.className='cam-chip';
-      btn.dataset.t=v;
-      btn.textContent=l;
-      btn.style.cssText=`font-family:var(--head);font-size:.58rem;letter-spacing:.12em;padding:5px 12px;border-radius:20px;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent;border:1px solid ${on?'rgba(0,255,136,0.7)':'rgba(255,255,255,0.2)'};background:${on?'rgba(0,255,136,0.22)':'rgba(255,255,255,0.08)'};color:${on?'var(--green)':'rgba(255,255,255,0.55)'}`;
-      btn.addEventListener('click',()=>setCamType(v));
-      chipsEl.appendChild(btn);
-    });
-  }
-
-  // ── Attach stream — iOS Safari: set srcObject AFTER element is in DOM ──
-  vid.srcObject=stream;
-  const playPromise=vid.play();
-  if(playPromise&&typeof playPromise.catch==='function'){
-    playPromise.catch(err=>{
-      // AbortError is common on iOS when stream starts — retry once
-      if(err.name==='AbortError'){
-        setTimeout(()=>{vid.play().catch(()=>{});},200);
-      }
-    });
-  }
-}
 
 async function startCam(){
   if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
-    toast('Camera not supported on this browser');
-    return;
+    toast('Camera not available on this browser');return;
   }
-  // Try progressively simpler constraints — iOS rejects strict ones silently
-  const attempts=[
+
+  // Fallback constraint chain — iOS rejects strict constraints silently
+  let stream=null,lastErr=null;
+  for(const c of[
     {video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}}},
     {video:{facingMode:'environment'}},
     {video:true}
-  ];
-  let stream=null,lastErr=null;
-  for(const c of attempts){
+  ]){
     try{stream=await navigator.mediaDevices.getUserMedia(c);break;}
-    catch(e){
-      lastErr=e;
-      if(e.name==='NotAllowedError'||e.name==='PermissionDeniedError')break;
-    }
+    catch(e){lastErr=e;if(e.name==='NotAllowedError'||e.name==='PermissionDeniedError')break;}
   }
   if(!stream){
     const n=lastErr?.name||'';
-    if(n==='NotAllowedError'||n==='PermissionDeniedError')
-      toast('Camera blocked — Settings › Safari › Camera › Allow');
-    else if(n==='NotFoundError'||n==='DevicesNotFoundError')
-      toast('No camera found — please upload an image');
-    else
-      toast('Camera unavailable — please upload an image');
+    toast(n==='NotAllowedError'||n==='PermissionDeniedError'?'Camera blocked — Settings › Safari › Camera › Allow':
+          n==='NotFoundError'||n==='DevicesNotFoundError'?'No camera found — please upload an image':
+          'Camera unavailable — please upload an image');
     return;
   }
+
   App.stream=stream;
-  // Do NOT call App.setState — that triggers render() which can fail on iOS.
-  // The camera UI is injected directly into the DOM instead.
-  buildCameraUI(stream);
+
+  // ── Step 1: inject HTML into root as a plain string ──
+  // Do NOT call App.setState — that triggers render() which may fail on iOS
+  // when a stream is active (symptom: red camera dot, home screen still showing).
+  const t=App.cfg?.type||'AIR_PISTOL_10M';
+  const chips=[['AIR_RIFLE_10M','10m RIFLE'],['AIR_PISTOL_10M','10m PISTOL']]
+    .map(([v,l])=>`<button class="cam-chip" data-t="${v}" onclick="setCamType('${v}')" style="font-family:var(--head);font-size:.58rem;letter-spacing:.12em;padding:5px 12px;border-radius:20px;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent;border:1px solid ${v===t?'rgba(0,255,136,.7)':'rgba(255,255,255,.2)'};background:${v===t?'rgba(0,255,136,.22)':'rgba(255,255,255,.08)'};color:${v===t?'var(--green)':'rgba(255,255,255,.55)'}">${l}</button>`).join('');
+
+  // Build overlay SVG — wrapped in try/catch so it never blocks the video
+  let overlaySVG='';
+  try{overlaySVG=buildCameraOverlaySVG(t);}catch(e){console.warn('overlay:',e);}
+
+  document.getElementById('root').innerHTML=`
+<div id="cam-screen" style="position:fixed;top:0;left:0;width:100%;height:100%;background:#000;display:flex;flex-direction:column;z-index:9000;overflow:hidden">
+  <div style="flex:1;position:relative;overflow:hidden;min-height:0">
+    <video id="camvid" autoplay playsinline muted style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block"></video>
+    <div style="position:absolute;top:0;left:0;right:0;padding:max(14px,env(safe-area-inset-top,14px)) 16px 10px;display:flex;align-items:center;gap:12px;background:linear-gradient(rgba(0,0,0,.75),transparent);z-index:10">
+      <button onclick="stopCam()" style="width:44px;height:44px;border-radius:50%;background:rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.3);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;touch-action:manipulation">
+        <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+      <span style="font-family:var(--head);font-size:.72rem;letter-spacing:.2em;color:#fff;flex:1">CAMERA</span>
+      <div style="display:flex;gap:8px">${chips}</div>
+    </div>
+    <div id="cam-overlay" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none">${overlaySVG}</div>
+    <div style="position:absolute;bottom:16px;left:0;right:0;text-align:center;pointer-events:none">
+      <span style="font-family:var(--head);font-size:.58rem;letter-spacing:.13em;color:rgba(255,255,255,.45);background:rgba(0,0,0,.45);padding:4px 12px;border-radius:20px">ALIGN TARGET TO GREEN RINGS</span>
+    </div>
+  </div>
+  <div style="flex-shrink:0;background:rgba(0,0,0,.92);border-top:1px solid rgba(255,255,255,.08);display:flex;align-items:center;justify-content:center;gap:52px;padding:24px 0 calc(24px + env(safe-area-inset-bottom,0px))">
+    <button onclick="stopCam()" style="width:48px;height:48px;border-radius:50%;background:rgba(255,255,255,.12);border:1.5px solid rgba(255,255,255,.35);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;touch-action:manipulation">
+      <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <button id="shutter-btn" onclick="capturePhoto()" style="width:80px;height:80px;border-radius:50%;background:transparent;border:5px solid #fff;cursor:pointer;display:flex;align-items:center;justify-content:center;touch-action:manipulation;-webkit-tap-highlight-color:transparent" onpointerdown="this.style.transform='scale(.88)'" onpointerup="this.style.transform=''">
+      <div style="width:64px;height:64px;border-radius:50%;background:#fff"></div>
+    </button>
+    <div style="width:48px;height:48px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px">
+      <div style="font-family:var(--head);font-size:.4rem;letter-spacing:.1em;color:rgba(255,255,255,.35)">HOLD</div>
+      <div style="font-family:var(--head);font-size:.4rem;letter-spacing:.1em;color:rgba(255,255,255,.35)">STEADY</div>
+    </div>
+  </div>
+</div>`;
+
+  // ── Step 2: query video element — it's in the DOM now ──
+  const vid=document.getElementById('camvid');
+  if(!vid){console.error('camvid not found after innerHTML');return;}
+
+  // webkit-playsinline must be set as a DOM property for older iOS WebKit
+  vid.setAttribute('webkit-playsinline','');
+  vid.playsInline=true;
+
+  // ── Step 3: attach stream synchronously ──
+  vid.srcObject=stream;
+
+  // ── Step 4: play on loadedmetadata — the reliable iOS pattern ──
+  // iOS won't have metadata until srcObject is set; this fires reliably.
+  vid.addEventListener('loadedmetadata',function onMeta(){
+    vid.removeEventListener('loadedmetadata',onMeta);
+    vid.play().catch(err=>{
+      // AbortError on iOS = stream not fully ready, retry shortly
+      if(err.name==='AbortError')setTimeout(()=>vid.play().catch(()=>{}),300);
+    });
+  });
+  // Also attempt immediate play — resolves instantly if already ready
+  vid.play().catch(()=>{});
 }
 
 function stopCam(){
+  const vid=document.getElementById('camvid');
+  if(vid){try{vid.srcObject=null;}catch(e){}}
   if(App.stream){App.stream.getTracks().forEach(t=>t.stop());App.stream=null;}
-  const ui=document.getElementById('cam-ui');
-  if(ui){
-    const v=ui.querySelector('video');
-    if(v){try{v.srcObject=null;}catch(e){}}
-    ui.remove();
-  }
-  // Render home screen (render() is safe here — no stream active)
   App.setState({view:'home'});
 }
 
 function capturePhoto(){
-  const v=document.getElementById('camvid');if(!v)return;
-  if(!v.videoWidth||!v.videoHeight){
-    // First frame not yet decoded — wait for it
-    v.addEventListener('canplay',function h(){v.removeEventListener('canplay',h);capturePhoto();},{once:true});
+  const vid=document.getElementById('camvid');
+  if(!vid)return;
+  // iOS: videoWidth/videoHeight are 0 until first frame — wait for it
+  if(!vid.videoWidth||!vid.videoHeight){
+    vid.addEventListener('canplay',function h(){vid.removeEventListener('canplay',h);capturePhoto();},{once:true});
     return;
   }
-  // Flash feedback
-  const btn=document.getElementById('shutter-btn');
-  if(btn){btn.style.transform='scale(.85)';setTimeout(()=>btn.style.transform='',120);}
-
   const c=document.createElement('canvas');
-  c.width=v.videoWidth;c.height=v.videoHeight;
-  c.getContext('2d').drawImage(v,0,0);
+  c.width=vid.videoWidth;c.height=vid.videoHeight;
+  c.getContext('2d').drawImage(vid,0,0);
   c.toBlob(b=>{
+    if(!b)return;
     App.imgUrl=URL.createObjectURL(b);
     if(App.stream){App.stream.getTracks().forEach(t=>t.stop());App.stream=null;}
-    const ui=document.getElementById('cam-ui');
-    if(ui){try{v.srcObject=null;}catch(e){}ui.remove();}
     App.setState({view:'configure'});
   },'image/jpeg',.95);
 }
+
 
 
 function openSession(id){
