@@ -2223,34 +2223,83 @@ function buildRecommendations(ss,overallAvg,avgSpread,avgRadius,improving){
 // ══════════════════════════════════════════════════════════════════
 //  CAMERA PAGE
 // ══════════════════════════════════════════════════════════════════
+function buildCameraOverlaySVG(type){
+  const spec=getISSFTargetSpec(type||'AIR_PISTOL_10M');
+  const S=280; // SVG canvas size in px
+  const cx=S/2,cy=S/2,maxR=S*0.47;
+  const scale=maxR/spec.outerRMm;
+  let svg='';
+  // Draw rings outer→inner, light green strokes only (no fill — keep camera visible)
+  for(let i=0;i<10;i++){
+    const r=(spec.steps[i]*scale).toFixed(1);
+    const isOuter=(i===0);
+    const op=isOuter?0.75:0.45;
+    const sw=isOuter?1.5:0.8;
+    svg+=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="rgba(0,255,136,${op})" stroke-width="${sw}"/>`;
+  }
+  // White centre dot ring (rifle)
+  if(spec.centreWhiteDot){
+    const dotR=Math.max(3,0.25*scale);
+    svg+=`<circle cx="${cx}" cy="${cy}" r="${dotR.toFixed(1)}" fill="rgba(0,255,136,0.6)"/>`;
+  }
+  // Ring numbers 1–8 at 4 cardinal positions
+  for(let i=0;i<8;i++){
+    const score=i+1;
+    const rOuter=spec.steps[i]*scale;
+    const rInner=i<9?spec.steps[i+1]*scale:0;
+    const rMid=((rOuter+rInner)/2).toFixed(1);
+    const fs=Math.max(6,Math.round(S*0.038));
+    svg+=`<text x="${(cx-rMid).toFixed(1)}" y="${(cy+fs*0.38).toFixed(1)}" font-size="${fs}" fill="rgba(0,255,136,0.7)" font-family="monospace" font-weight="bold" text-anchor="middle">${score}</text>`;
+    svg+=`<text x="${(cx+rMid).toFixed(1)}" y="${(cy+fs*0.38).toFixed(1)}" font-size="${fs}" fill="rgba(0,255,136,0.7)" font-family="monospace" font-weight="bold" text-anchor="middle">${score}</text>`;
+    svg+=`<text x="${cx}" y="${(cy-rMid+fs*0.38).toFixed(1)}" font-size="${fs}" fill="rgba(0,255,136,0.7)" font-family="monospace" font-weight="bold" text-anchor="middle">${score}</text>`;
+    svg+=`<text x="${cx}" y="${(cy+parseFloat(rMid)+fs*0.38).toFixed(1)}" font-size="${fs}" fill="rgba(0,255,136,0.7)" font-family="monospace" font-weight="bold" text-anchor="middle">${score}</text>`;
+  }
+  // Centre crosshair dot
+  svg+=`<circle cx="${cx}" cy="${cy}" r="3" fill="rgba(0,255,136,0.8)"/>`;
+  // Crosshair lines (broken, short)
+  const arm=maxR*0.18;
+  svg+=`<line x1="${cx-maxR}" y1="${cy}" x2="${cx-maxR+arm}" y2="${cy}" stroke="rgba(0,255,136,0.55)" stroke-width="1.2"/>`;
+  svg+=`<line x1="${cx+maxR-arm}" y1="${cy}" x2="${cx+maxR}" y2="${cy}" stroke="rgba(0,255,136,0.55)" stroke-width="1.2"/>`;
+  svg+=`<line x1="${cx}" y1="${cy-maxR}" x2="${cx}" y2="${cy-maxR+arm}" stroke="rgba(0,255,136,0.55)" stroke-width="1.2"/>`;
+  svg+=`<line x1="${cx}" y1="${cy+maxR-arm}" x2="${cx}" y2="${cy+maxR}" stroke="rgba(0,255,136,0.55)" stroke-width="1.2"/>`;
+  // Corner alignment brackets
+  const bk=26,bs=S*0.12;
+  const corners=[[bk,bk],[S-bk,bk],[bk,S-bk],[S-bk,S-bk]];
+  corners.forEach(([bx,by])=>{
+    const hx=bx<S/2?1:-1, hy=by<S/2?1:-1;
+    svg+=`<path d="M${bx+hx*bs},${by} L${bx},${by} L${bx},${by+hy*bs}" stroke="rgba(0,255,136,0.8)" stroke-width="2" fill="none" stroke-linecap="round"/>`;
+  });
+  return `<svg width="${S}" height="${S}" viewBox="0 0 ${S} ${S}" xmlns="http://www.w3.org/2000/svg">${svg}</svg>`;
+}
+function setCamType(t){App.cfg=Object.assign({},App.cfg,{type:t});DB.prefs=Object.assign({},DB.prefs,{cfg:App.cfg});const ov=document.getElementById('cam-overlay');if(ov)ov.innerHTML=buildCameraOverlaySVG(t);const chips=document.querySelectorAll('.cam-chip');chips.forEach(c=>{c.style.background=c.dataset.t===t?'rgba(0,255,136,0.22)':'rgba(255,255,255,0.08)';c.style.borderColor=c.dataset.t===t?'rgba(0,255,136,0.7)':'rgba(255,255,255,0.2)';c.style.color=c.dataset.t===t?'var(--green)':'rgba(255,255,255,0.55)';});}
 function pgCamera(){
+  const t=App.cfg?.type||'AIR_PISTOL_10M';
+  const disciplines=[['AIR_RIFLE_10M','10m RIFLE'],['AIR_PISTOL_10M','10m PISTOL']];
+  const chips=disciplines.map(([v,l])=>{
+    const on=v===t;
+    return `<button class="cam-chip" data-t="${v}" onclick="setCamType('${v}')" style="font-family:var(--head);font-size:.58rem;letter-spacing:.12em;padding:5px 12px;border-radius:20px;cursor:pointer;border:1px solid ${on?'rgba(0,255,136,0.7)':'rgba(255,255,255,0.2)'};background:${on?'rgba(0,255,136,0.22)':'rgba(255,255,255,0.08)'};color:${on?'var(--green)':'rgba(255,255,255,0.55)'};touch-action:manipulation;-webkit-tap-highlight-color:transparent">${l}</button>`;
+  }).join('');
   return`
 <div style="position:fixed;inset:0;background:#000;display:flex;flex-direction:column;z-index:500">
   <!-- Viewfinder fills all available space -->
   <div style="flex:1;position:relative;overflow:hidden;min-height:0">
     <video id="camvid" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;display:block"></video>
     <!-- Top bar -->
-    <div style="position:absolute;top:0;left:0;right:0;padding:14px 16px;display:flex;align-items:center;gap:12px;background:linear-gradient(rgba(0,0,0,.7),transparent);z-index:10">
+    <div style="position:absolute;top:0;left:0;right:0;padding:max(14px,env(safe-area-inset-top,14px)) 16px 10px;display:flex;align-items:center;gap:12px;background:linear-gradient(rgba(0,0,0,.75),transparent);z-index:10">
       <button class="btn-icon btn" onclick="stopCam()" style="background:rgba(0,0,0,.5);border-color:rgba(255,255,255,.3);color:#fff">${I.back}</button>
-      <span style="font-family:var(--head);font-size:.72rem;letter-spacing:.2em;color:#fff">CAMERA</span>
+      <span style="font-family:var(--head);font-size:.72rem;letter-spacing:.2em;color:#fff;flex:1">CAMERA</span>
+      <div style="display:flex;gap:8px">${chips}</div>
     </div>
-    <!-- Crosshair -->
-    <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none">
-      <svg width="210" height="210" viewBox="0 0 240 240" fill="none" opacity=".55">
-        <circle cx="120" cy="120" r="112" stroke="var(--green)" stroke-width="1" stroke-dasharray="8 5"/>
-        <line x1="12" y1="120" x2="80" y2="120" stroke="var(--green)" stroke-width="1.5"/>
-        <line x1="160" y1="120" x2="228" y2="120" stroke="var(--green)" stroke-width="1.5"/>
-        <line x1="120" y1="12" x2="120" y2="80" stroke="var(--green)" stroke-width="1.5"/>
-        <line x1="120" y1="160" x2="120" y2="228" stroke="var(--green)" stroke-width="1.5"/>
-        <circle cx="120" cy="120" r="4" stroke="var(--green)" stroke-width="1.5"/>
-        <path d="M32 58 L32 32 L58 32" stroke="var(--green)" stroke-width="2" fill="none"/>
-        <path d="M182 32 L208 32 L208 58" stroke="var(--green)" stroke-width="2" fill="none"/>
-        <path d="M32 182 L32 208 L58 208" stroke="var(--green)" stroke-width="2" fill="none"/>
-        <path d="M208 182 L208 208 L182 208" stroke="var(--green)" stroke-width="2" fill="none"/>
-      </svg>
+    <!-- ISSF target ring overlay -->
+    <div id="cam-overlay" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none">
+      ${buildCameraOverlaySVG(t)}
+    </div>
+    <!-- Align hint -->
+    <div style="position:absolute;bottom:16px;left:0;right:0;text-align:center;pointer-events:none">
+      <span style="font-family:var(--head);font-size:.58rem;letter-spacing:.13em;color:rgba(255,255,255,.45);background:rgba(0,0,0,.45);padding:4px 12px;border-radius:20px">ALIGN TARGET TO GREEN RINGS</span>
     </div>
   </div>
-  <!-- Shutter bar — fixed height, always visible above browser chrome -->
+  <!-- Shutter bar -->
   <div style="flex-shrink:0;height:130px;background:rgba(0,0,0,.92);display:flex;align-items:center;justify-content:center;gap:52px;border-top:1px solid rgba(255,255,255,.08)">
     <button onclick="stopCam()" style="width:48px;height:48px;border-radius:50%;background:rgba(255,255,255,.12);border:1.5px solid rgba(255,255,255,.35);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center">
       <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="15 18 9 12 15 6"/></svg>
