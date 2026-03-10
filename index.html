@@ -2723,11 +2723,21 @@ function importData(){
 }
 
 async function startCam(){
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
+    toast('Camera not supported — please use HTTPS or upload an image');return;
+  }
+  let s;
   try{
-    const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:1920}}});
-    App.stream=s;App.setState({view:'camera'});
-    setTimeout(()=>{const v=document.getElementById('camvid');if(v)v.srcObject=s;},80);
-  }catch{toast('Camera unavailable — please upload an image');}
+    s=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:1920}}});
+  }catch(err){
+    if(err&&err.name==='NotAllowedError')toast('Camera permission denied — please allow access');
+    else if(err&&err.name==='NotFoundError')toast('No camera found — please upload an image');
+    else toast('Camera unavailable — please upload an image');
+    return;
+  }
+  App.stream=s;
+  App.setState({view:'camera'});
+  setTimeout(()=>{const v=document.getElementById('camvid');if(v)v.srcObject=s;},80);
 }
 function stopCam(){if(App.stream){App.stream.getTracks().forEach(t=>t.stop());App.stream=null;}App.setState({view:'home'});}
 function capturePhoto(){
