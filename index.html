@@ -42,12 +42,7 @@ body{background-image:
 /* ── ANIMATIONS ── */
 @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
 @keyframes spin{to{transform:rotate(360deg)}}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.25}}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
-@keyframes scanline{0%{top:-2px}100%{top:102%}}
 @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
-@keyframes glowPulse{0%,100%{box-shadow:0 0 8px rgba(0,255,136,0.2)}50%{box-shadow:0 0 20px rgba(0,255,136,0.5)}}
-@keyframes countUp{from{opacity:0;transform:scale(.8)}to{opacity:1;transform:scale(1)}}
 .fade-up{animation:fadeUp 0.45s cubic-bezier(.2,.8,.3,1) both}
 .s1{animation-delay:.06s}.s2{animation-delay:.12s}.s3{animation-delay:.18s}.s4{animation-delay:.24s}.s5{animation-delay:.30s}.s6{animation-delay:.36s}
 
@@ -65,14 +60,11 @@ body{background-image:
 
 /* ── CARDS ── */
 .card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);overflow:hidden}
-.card-p{padding:16px}
-.card-glow{border-color:rgba(0,255,136,0.3);box-shadow:0 0 24px rgba(0,255,136,0.06)}
 
 /* ── STAT BOX ── */
 .sbox{background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r);padding:14px 8px;text-align:center}
 .sbox-lbl{font-family:var(--head);font-size:.6rem;letter-spacing:.12em;color:var(--text3);margin-bottom:6px}
 .sbox-val{font-family:var(--mono);font-size:1.08rem}
-.sbox-unit{font-size:.72rem;color:var(--text3)}
 
 /* ── RANGE — fat 44px touch target ── */
 input[type=range]{-webkit-appearance:none;width:100%;height:44px;background:transparent;outline:none;cursor:pointer}
@@ -112,8 +104,6 @@ input[type=range]::-moz-range-thumb{width:26px;height:26px;border-radius:50%;bac
 .slbl::after{content:'';flex:1;height:1px;background:var(--border)}
 
 /* ── PROC STEP ── */
-.pstep{display:flex;align-items:center;gap:14px;padding:10px 0;transition:opacity .3s}
-.pdot{width:26px;height:26px;border-radius:50%;border:1.5px solid;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .3s}
 
 /* ── TOAST ── */
 #toast{position:fixed;top:max(16px,env(safe-area-inset-top,16px));left:50%;transform:translateX(-50%) translateY(-100px);background:var(--bg3);border:1px solid var(--green);color:var(--green);padding:13px 26px;border-radius:8px;font-family:var(--head);font-size:.72rem;letter-spacing:.1em;z-index:9999;transition:transform .3s cubic-bezier(.2,.8,.3,1);pointer-events:none;white-space:nowrap;box-shadow:0 4px 24px rgba(0,0,0,.5)}
@@ -291,71 +281,6 @@ function toast(msg,dur=2600){
   _toastT=setTimeout(()=>e.classList.remove('show'),dur);
 }
 
-// ══════════════════════════════════════════════════════════════════
-//  CV ENGINE
-// ══════════════════════════════════════════════════════════════════
-function toGray(data,w,h){
-  const g=new Float32Array(w*h);
-  for(let i=0;i<w*h;i++)g[i]=0.299*data[i*4]+0.587*data[i*4+1]+0.114*data[i*4+2];
-  return g;
-}
-function morph(bin,w,h,op,r){
-  const out=new Uint8Array(w*h);
-  for(let y=r;y<h-r;y++)for(let x=r;x<w-r;x++){
-    let v=(op==='e');
-    L:for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
-      if(dy*dy+dx*dx>r*r)continue;
-      const b=!!bin[(y+dy)*w+(x+dx)];
-      if(op==='e'&&!b){v=false;break L;}
-      if(op==='d'&&b){v=true;break L;}
-    }
-    out[y*w+x]=v?1:0;
-  }
-  return out;
-}
-function detectHoles(canvas){
-  const ctx=canvas.getContext('2d');
-  const{width:w,height:h}=canvas;
-  const d=ctx.getImageData(0,0,w,h).data;
-  const g=toGray(d,w,h);
-  let sum=0,sq=0;
-  for(const v of g){sum+=v;sq+=v*v;}
-  const mn=sum/(w*h),sd=Math.sqrt(Math.max(0,sq/(w*h)-mn*mn));
-  const thr=Math.max(32,Math.min(mn-sd*1.15,148));
-  let bin=new Uint8Array(w*h);
-  for(let i=0;i<g.length;i++)bin[i]=g[i]<thr?1:0;
-  bin=morph(morph(bin,w,h,'e',1),w,h,'d',3);
-  const vis=new Uint8Array(w*h),blobs=[];
-  for(let y=3;y<h-3;y++)for(let x=3;x<w-3;x++){
-    const i=y*w+x;
-    if(!bin[i]||vis[i])continue;
-    const stk=[i],px=[];vis[i]=1;
-    while(stk.length){
-      const c=stk.pop();px.push(c);
-      const cy=~~(c/w),cx=c%w;
-      for(const[dy,dx]of[[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]]){
-        const ny=cy+dy,nx=cx+dx;
-        if(ny<1||ny>=h-1||nx<1||nx>=w-1)continue;
-        const ni=ny*w+nx;
-        if(bin[ni]&&!vis[ni]){vis[ni]=1;stk.push(ni);}
-      }
-    }
-    if(px.length>=10&&px.length<=9000)blobs.push(px);
-  }
-  const holes=[];
-  for(const px of blobs){
-    let sx=0,sy=0,mnX=w,mxX=0,mnY=h,mxY=0;
-    for(const i of px){const y=~~(i/w),x=i%w;sx+=x;sy+=y;mnX=Math.min(mnX,x);mxX=Math.max(mxX,x);mnY=Math.min(mnY,y);mxY=Math.max(mxY,y);}
-    const cx=sx/px.length,cy=sy/px.length,ar=(mxX-mnX+1)/(mxY-mnY+1);
-    if(ar<0.22||ar>4.5)continue;
-    const r=Math.sqrt(px.length/Math.PI);
-    if(px.length/(Math.PI*r*r)<0.18)continue;
-    holes.push({cx,cy,radius:Math.max(r,5),area:px.length});
-  }
-  const kept=[];
-  for(const h2 of holes)if(kept.every(k=>Math.hypot(h2.cx-k.cx,h2.cy-k.cy)>16))kept.push(h2);
-  return kept;
-}
 // Parse pellet radius in mm from caliber string e.g. ".177 (4.5mm)" -> 2.25
 function pelletRadiusMm(caliberStr){
   const m=(caliberStr||'').match(/([\d.]+)\s*mm/i);
@@ -521,12 +446,6 @@ function genDemo(n=8){
   return c.toDataURL('image/jpeg',.95);
 }
 const loadImg=url=>new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=url;});
-function toCanvas(img,max=920){
-  const sc=Math.min(max/Math.max(img.width,img.height),1);
-  const w=~~(img.width*sc),h=~~(img.height*sc);
-  const c=document.createElement('canvas');c.width=w;c.height=h;
-  c.getContext('2d').drawImage(img,0,0,w,h);return c;
-}
 
 // ══════════════════════════════════════════════════════════════════
 //  ANALYTICS HELPERS
@@ -1088,7 +1007,7 @@ function renderAIReportOverlay(report,session){
 const App={
   view:'home',imgUrl:null,stream:null,
   cfg:Object.assign({type:'AIR_PISTOL_10M',caliber:'.177 (4.5mm)',mode:'decimal',shots:10}, DB.prefs.cfg||{}),
-  procStep:0,results:null,
+  results:null,
   viewSession:null,
   aiLoading:false,showAIReport:false,aiReport:null,aiReportSession:null,
   setState(p){Object.assign(this,p);render();},
@@ -1103,8 +1022,6 @@ const App={
   },
   get sessions(){return DB.sessions;}
 };
-const STEPS=['Loading image','Preprocessing','Perspective alignment','Ring detection','Bullet detection','Calculating scores','Rendering overlay'];
-
 // ══════════════════════════════════════════════════════════════════
 //  PIPELINE — go straight to manual editor, no auto-detection
 // ══════════════════════════════════════════════════════════════════
@@ -1127,10 +1044,6 @@ const I={
   up:`<svg width="19" height="19" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>`,
   cam:`<svg width="19" height="19" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>`,
   scan:`<svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`,
-  chart:`<svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>`,
-  hist:`<svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
-  bar:`<svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>`,
-  report:`<svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>`,
   trash:`<svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M9 6V4h6v2"/></svg>`,
   dl:`<svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`,
   bolt:`<svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`,
@@ -1154,7 +1067,6 @@ function pgHome(){
   const s=DB.sessions,cnt=s.length;
   const best=cnt?Math.max(...s.filter(x=>x.stats).map(x=>pct(x.stats.totalScore,x.stats.maxScore))):null;
   const cu=Users.current;
-  const allUsers=Users.all;
   return`
 <div class="scroll-page" style="min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:44px 24px calc(90px + env(safe-area-inset-bottom,0px))">
   <!-- Top bar: user switcher + help -->
@@ -1274,44 +1186,6 @@ function pgConfigure(){
     <button class="btn btn-primary fade-up s3" style="width:100%;padding:18px;font-size:.8rem;margin-top:4px" onclick="runAnalysis(App.imgUrl)">
       ${I.edit}&nbsp; PLACE SHOTS MANUALLY
     </button>
-  </div>
-</div>`;
-}
-
-// ══════════════════════════════════════════════════════════════════
-//  PAGE: PROCESSING
-// ══════════════════════════════════════════════════════════════════
-function pgProcessing(){
-  return`
-<div style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px 24px">
-  <div style="position:relative;margin-bottom:28px">
-    <svg width="90" height="90" viewBox="0 0 90 90" style="animation:spin 2.5s linear infinite">
-      <circle cx="45" cy="45" r="41" stroke="var(--border2)" stroke-width="3" fill="none"/>
-      <circle cx="45" cy="45" r="41" stroke="var(--green)" stroke-width="3" fill="none" stroke-dasharray="96 162" stroke-linecap="round"/>
-    </svg>
-    <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center">
-      <svg width="36" height="36" viewBox="0 0 78 78" fill="none">
-        <circle cx="39" cy="39" r="5" fill="var(--green)"/>
-        <line x1="4" y1="39" x2="28" y2="39" stroke="var(--green)" stroke-width="2.5"/>
-        <line x1="50" y1="39" x2="74" y2="39" stroke="var(--green)" stroke-width="2.5"/>
-        <line x1="39" y1="4" x2="39" y2="28" stroke="var(--green)" stroke-width="2.5"/>
-        <line x1="39" y1="50" x2="39" y2="74" stroke="var(--green)" stroke-width="2.5"/>
-      </svg>
-    </div>
-  </div>
-  <h2 style="font-family:var(--head);font-size:.92rem;letter-spacing:.22em;margin-bottom:6px">ANALYZING</h2>
-  <p style="font-family:var(--mono);font-size:.75rem;color:var(--green);margin-bottom:28px;animation:pulse 1.1s ease-in-out infinite">${STEPS[App.procStep]||'Finalizing…'}</p>
-  <div style="width:100%;max-width:290px">
-    ${STEPS.map((s,i)=>{
-      const done=i<App.procStep,curr=i===App.procStep;
-      return`<div class="pstep" style="opacity:${i>App.procStep?0.25:1}">
-        <div class="pdot" style="border-color:${done?'var(--green)':curr?'var(--amber)':'var(--border2)'};background:${done?'var(--green-dim)':'transparent'}">
-          ${done?`<span style="color:var(--green)">${I.ok}</span>`:''}
-          ${curr?`<div style="width:7px;height:7px;border-radius:50%;background:var(--amber);animation:pulse .8s ease-in-out infinite"></div>`:''}
-        </div>
-        <span style="font-family:var(--mono);font-size:.7rem;color:${done?'var(--green)':curr?'var(--amber)':'var(--text4)'}">${s}</span>
-      </div>`;
-    }).join('')}
   </div>
 </div>`;
 }
@@ -2623,7 +2497,6 @@ function render(){
   if(App.view==='home')       html=pgHome();
   else if(App.view==='camera')     html=pgCamera();
   else if(App.view==='configure')  html=pgConfigure();
-  else if(App.view==='processing') html=pgProcessing();
   else if(App.view==='results')    html=pgResults(App.viewSession||App.results);
   else if(App.view==='history')    html=pgHistory();
   else if(App.view==='progress')   html=pgProgress();
@@ -2639,16 +2512,7 @@ function render(){
     const el=overlay.firstElementChild;
     if(el)document.body.appendChild(el);
   }
-  if(App.view==='camera'){
-    requestAnimationFrame(()=>requestAnimationFrame(()=>{
-      const v=document.getElementById('camvid');
-      if(v&&App.stream){
-        v.srcObject=App.stream;
-        const p=v.play();
-        if(p&&typeof p.catch==='function') p.catch(()=>{});
-      }
-    }));
-  }
+  if(App.view==='camera')attachCamStream();
   if(App.view==='progress'){
     const ss=DB.sessions.filter(s=>s.stats&&s.scored?.length>0);
     requestAnimationFrame(()=>{
@@ -2731,26 +2595,50 @@ function importData(){
   inp.click();
 }
 
+// ── CAMERA — iOS Safari requires HTTPS + explicit .play() ──────────
+// attachCamStream: called after render() so the video element exists in DOM.
+// Double rAF guarantees the browser has painted the new DOM before we touch it.
+function attachCamStream(){
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    const v=document.getElementById('camvid');
+    if(!v||!App.stream)return;
+    try{
+      v.srcObject=App.stream;
+      const p=v.play();
+      if(p&&typeof p.catch==='function')p.catch(()=>{/* autoplay policy — safe to ignore */});
+    }catch(e){console.warn('Camera attach:',e);}
+  }));
+}
+
 async function startCam(){
-  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
-    toast('Camera not supported — open via HTTPS or upload an image');return;
+  // iOS Safari silently blocks getUserMedia on http:// — must be HTTPS
+  if(location.protocol!=='https:'&&location.hostname!=='localhost'&&location.hostname!=='127.0.0.1'){
+    toast('Camera needs HTTPS — use Upload instead');
+    return;
   }
-  let stream;
-  // Try high-res first, then environment-only, then any camera — iOS can reject strict constraints
-  const constraints=[
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
+    toast('Camera not supported — please upload an image');
+    return;
+  }
+  // Try progressively simpler constraints — iOS can reject strict ones silently
+  const attempts=[
     {video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}}},
     {video:{facingMode:'environment'}},
     {video:true}
   ];
-  let lastErr;
-  for(const c of constraints){
+  let stream=null,lastErr=null;
+  for(const c of attempts){
     try{stream=await navigator.mediaDevices.getUserMedia(c);break;}
-    catch(e){lastErr=e;}
+    catch(e){
+      lastErr=e;
+      // NotAllowed means user denied — no point retrying with other constraints
+      if(e.name==='NotAllowedError'||e.name==='PermissionDeniedError')break;
+    }
   }
   if(!stream){
     const n=lastErr?.name||'';
     if(n==='NotAllowedError'||n==='PermissionDeniedError')
-      toast('Camera permission denied — check iOS Settings → Safari → Camera');
+      toast('Camera blocked — Settings › Safari › Camera › Allow');
     else if(n==='NotFoundError'||n==='DevicesNotFoundError')
       toast('No camera found — please upload an image');
     else
@@ -2759,28 +2647,33 @@ async function startCam(){
   }
   App.stream=stream;
   App.setState({view:'camera'});
-  // iOS Safari REQUIRES explicit .play() after setting srcObject — autoplay alone is not enough.
-  // Double-rAF ensures the video element is fully in the DOM before we touch it.
-  requestAnimationFrame(()=>requestAnimationFrame(()=>{
-    const v=document.getElementById('camvid');
-    if(!v)return;
-    v.srcObject=stream;
-    const p=v.play();
-    if(p&&typeof p.catch==='function') p.catch(()=>{/* autoplay policy — ignored */});
-  }));
+  attachCamStream();
 }
-function stopCam(){if(App.stream){App.stream.getTracks().forEach(t=>t.stop());App.stream=null;}App.setState({view:'home'});}
+
+function stopCam(){
+  if(App.stream){App.stream.getTracks().forEach(t=>t.stop());App.stream=null;}
+  const v=document.getElementById('camvid');
+  if(v){try{v.srcObject=null;}catch(e){}}
+  App.setState({view:'home'});
+}
+
 function capturePhoto(){
   const v=document.getElementById('camvid');if(!v)return;
-  // iOS: videoWidth/videoHeight can be 0 if stream hasn't rendered a frame yet — wait for it
+  // iOS: videoWidth/videoHeight can be 0 if first frame hasn't arrived yet
   if(!v.videoWidth||!v.videoHeight){
-    v.addEventListener('canplay',function once(){v.removeEventListener('canplay',once);capturePhoto();},{once:true});
+    v.addEventListener('canplay',function h(){v.removeEventListener('canplay',h);capturePhoto();},{once:true});
     return;
   }
-  const c=document.createElement('canvas');c.width=v.videoWidth;c.height=v.videoHeight;
+  const c=document.createElement('canvas');
+  c.width=v.videoWidth;c.height=v.videoHeight;
   c.getContext('2d').drawImage(v,0,0);
-  c.toBlob(b=>{App.imgUrl=URL.createObjectURL(b);App.stream?.getTracks().forEach(t=>t.stop());App.stream=null;App.setState({view:'configure'});}, 'image/jpeg',.95);
+  c.toBlob(b=>{
+    App.imgUrl=URL.createObjectURL(b);
+    if(App.stream){App.stream.getTracks().forEach(t=>t.stop());App.stream=null;}
+    App.setState({view:'configure'});
+  },'image/jpeg',.95);
 }
+
 function openSession(id){
   const s=DB.sessions.find(s=>s.id===id);if(!s)return;
   App.results=s;App.viewSession=s;App.setState({view:'results'});
