@@ -2639,7 +2639,16 @@ function render(){
     const el=overlay.firstElementChild;
     if(el)document.body.appendChild(el);
   }
-  if(App.view==='camera'){const v=document.getElementById('camvid');if(v&&App.stream)v.srcObject=App.stream;}
+  if(App.view==='camera'){
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{
+      const v=document.getElementById('camvid');
+      if(v&&App.stream){
+        v.srcObject=App.stream;
+        const p=v.play();
+        if(p&&typeof p.catch==='function') p.catch(()=>{});
+      }
+    }));
+  }
   if(App.view==='progress'){
     const ss=DB.sessions.filter(s=>s.stats&&s.scored?.length>0);
     requestAnimationFrame(()=>{
@@ -2724,24 +2733,50 @@ function importData(){
 
 async function startCam(){
   if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
-    toast('Camera not supported — please use HTTPS or upload an image');return;
+    toast('Camera not supported — open via HTTPS or upload an image');return;
   }
-  let s;
-  try{
-    s=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:1920}}});
-  }catch(err){
-    if(err&&err.name==='NotAllowedError')toast('Camera permission denied — please allow access');
-    else if(err&&err.name==='NotFoundError')toast('No camera found — please upload an image');
-    else toast('Camera unavailable — please upload an image');
+  let stream;
+  // Try high-res first, then environment-only, then any camera — iOS can reject strict constraints
+  const constraints=[
+    {video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}}},
+    {video:{facingMode:'environment'}},
+    {video:true}
+  ];
+  let lastErr;
+  for(const c of constraints){
+    try{stream=await navigator.mediaDevices.getUserMedia(c);break;}
+    catch(e){lastErr=e;}
+  }
+  if(!stream){
+    const n=lastErr?.name||'';
+    if(n==='NotAllowedError'||n==='PermissionDeniedError')
+      toast('Camera permission denied — check iOS Settings → Safari → Camera');
+    else if(n==='NotFoundError'||n==='DevicesNotFoundError')
+      toast('No camera found — please upload an image');
+    else
+      toast('Camera unavailable — please upload an image');
     return;
   }
-  App.stream=s;
+  App.stream=stream;
   App.setState({view:'camera'});
-  setTimeout(()=>{const v=document.getElementById('camvid');if(v)v.srcObject=s;},80);
+  // iOS Safari REQUIRES explicit .play() after setting srcObject — autoplay alone is not enough.
+  // Double-rAF ensures the video element is fully in the DOM before we touch it.
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    const v=document.getElementById('camvid');
+    if(!v)return;
+    v.srcObject=stream;
+    const p=v.play();
+    if(p&&typeof p.catch==='function') p.catch(()=>{/* autoplay policy — ignored */});
+  }));
 }
 function stopCam(){if(App.stream){App.stream.getTracks().forEach(t=>t.stop());App.stream=null;}App.setState({view:'home'});}
 function capturePhoto(){
   const v=document.getElementById('camvid');if(!v)return;
+  // iOS: videoWidth/videoHeight can be 0 if stream hasn't rendered a frame yet — wait for it
+  if(!v.videoWidth||!v.videoHeight){
+    v.addEventListener('canplay',function once(){v.removeEventListener('canplay',once);capturePhoto();},{once:true});
+    return;
+  }
   const c=document.createElement('canvas');c.width=v.videoWidth;c.height=v.videoHeight;
   c.getContext('2d').drawImage(v,0,0);
   c.toBlob(b=>{App.imgUrl=URL.createObjectURL(b);App.stream?.getTracks().forEach(t=>t.stop());App.stream=null;App.setState({view:'configure'});}, 'image/jpeg',.95);
