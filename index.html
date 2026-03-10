@@ -2099,51 +2099,66 @@ function buildRecommendations(ss,overallAvg,avgSpread,avgRadius,improving){
 // ══════════════════════════════════════════════════════════════════
 function buildCameraOverlaySVG(type){
   const spec=getISSFTargetSpec(type||'AIR_PISTOL_10M');
-  const S=280; // SVG canvas size in px
-  const cx=S/2,cy=S/2,maxR=S*0.47;
+  const S=300;
+  const cx=S/2, cy=S/2, maxR=S*0.46;
   const scale=maxR/spec.outerRMm;
   let svg='';
-  // Draw rings outer→inner, light green strokes only (no fill — keep camera visible)
+
+  // Dark semi-transparent scrim outside the outer ring — makes rings pop
+  svg+=`<circle cx="${cx}" cy="${cy}" r="${maxR+2}" fill="rgba(0,0,0,0.35)" stroke="none"/>`;
+
+  // Draw rings outer→inner — thick strokes with glow shadow
   for(let i=0;i<10;i++){
     const r=(spec.steps[i]*scale).toFixed(1);
     const isOuter=(i===0);
-    const op=isOuter?0.75:0.45;
-    const sw=isOuter?1.5:0.8;
-    svg+=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="rgba(0,255,136,${op})" stroke-width="${sw}"/>`;
+    const sw = isOuter ? 3 : (i<3 ? 2 : 1.5);
+    const op = isOuter ? 1 : (i<5 ? 0.85 : 0.65);
+    // Shadow ring for glow effect
+    svg+=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="rgba(0,255,80,0.3)" stroke-width="${sw+4}"/>`;
+    // Main ring
+    svg+=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="rgba(0,255,100,${op})" stroke-width="${sw}"/>`;
   }
-  // White centre dot ring (rifle)
-  if(spec.centreWhiteDot){
-    const dotR=Math.max(3,0.25*scale);
-    svg+=`<circle cx="${cx}" cy="${cy}" r="${dotR.toFixed(1)}" fill="rgba(0,255,136,0.6)"/>`;
-  }
-  // Ring numbers 1–8 at 4 cardinal positions
+
+  // Cut out the inside of outer ring so camera feed is clear
+  // (already transparent since fill="none" above)
+
+  // Ring numbers 1–8 — large, white with dark background pill
   for(let i=0;i<8;i++){
     const score=i+1;
     const rOuter=spec.steps[i]*scale;
     const rInner=i<9?spec.steps[i+1]*scale:0;
-    const rMid=((rOuter+rInner)/2).toFixed(1);
-    const fs=Math.max(6,Math.round(S*0.038));
-    svg+=`<text x="${(cx-rMid).toFixed(1)}" y="${(cy+fs*0.38).toFixed(1)}" font-size="${fs}" fill="rgba(0,255,136,0.7)" font-family="monospace" font-weight="bold" text-anchor="middle">${score}</text>`;
-    svg+=`<text x="${(cx+rMid).toFixed(1)}" y="${(cy+fs*0.38).toFixed(1)}" font-size="${fs}" fill="rgba(0,255,136,0.7)" font-family="monospace" font-weight="bold" text-anchor="middle">${score}</text>`;
-    svg+=`<text x="${cx}" y="${(cy-rMid+fs*0.38).toFixed(1)}" font-size="${fs}" fill="rgba(0,255,136,0.7)" font-family="monospace" font-weight="bold" text-anchor="middle">${score}</text>`;
-    svg+=`<text x="${cx}" y="${(cy+parseFloat(rMid)+fs*0.38).toFixed(1)}" font-size="${fs}" fill="rgba(0,255,136,0.7)" font-family="monospace" font-weight="bold" text-anchor="middle">${score}</text>`;
+    const rMid=((rOuter+rInner)/2);
+    const fs=Math.max(8,Math.round(S*0.042));
+    const positions=[[cx-rMid,cy],[cx+rMid,cy],[cx,cy-rMid],[cx,cy+rMid]];
+    positions.forEach(([px,py])=>{
+      svg+=`<rect x="${(px-fs*0.6).toFixed(1)}" y="${(py-fs*0.72).toFixed(1)}" width="${(fs*1.2).toFixed(1)}" height="${(fs*1.1).toFixed(1)}" rx="2" fill="rgba(0,0,0,0.55)"/>`;
+      svg+=`<text x="${px.toFixed(1)}" y="${(py+fs*0.32).toFixed(1)}" font-size="${fs}" fill="#00ff64" font-family="monospace" font-weight="bold" text-anchor="middle">${score}</text>`;
+    });
   }
+
   // Centre crosshair dot
-  svg+=`<circle cx="${cx}" cy="${cy}" r="3" fill="rgba(0,255,136,0.8)"/>`;
-  // Crosshair lines (broken, short)
-  const arm=maxR*0.18;
-  svg+=`<line x1="${cx-maxR}" y1="${cy}" x2="${cx-maxR+arm}" y2="${cy}" stroke="rgba(0,255,136,0.55)" stroke-width="1.2"/>`;
-  svg+=`<line x1="${cx+maxR-arm}" y1="${cy}" x2="${cx+maxR}" y2="${cy}" stroke="rgba(0,255,136,0.55)" stroke-width="1.2"/>`;
-  svg+=`<line x1="${cx}" y1="${cy-maxR}" x2="${cx}" y2="${cy-maxR+arm}" stroke="rgba(0,255,136,0.55)" stroke-width="1.2"/>`;
-  svg+=`<line x1="${cx}" y1="${cy+maxR-arm}" x2="${cx}" y2="${cy+maxR}" stroke="rgba(0,255,136,0.55)" stroke-width="1.2"/>`;
-  // Corner alignment brackets
-  const bk=26,bs=S*0.12;
-  const corners=[[bk,bk],[S-bk,bk],[bk,S-bk],[S-bk,S-bk]];
-  corners.forEach(([bx,by])=>{
-    const hx=bx<S/2?1:-1, hy=by<S/2?1:-1;
-    svg+=`<path d="M${bx+hx*bs},${by} L${bx},${by} L${bx},${by+hy*bs}" stroke="rgba(0,255,136,0.8)" stroke-width="2" fill="none" stroke-linecap="round"/>`;
+  svg+=`<circle cx="${cx}" cy="${cy}" r="5" fill="rgba(0,255,100,0.9)"/>`;
+  svg+=`<circle cx="${cx}" cy="${cy}" r="3" fill="#fff"/>`;
+
+  // Crosshair arms
+  const arm=maxR*0.22;
+  [
+    [cx-maxR,cy,cx-maxR+arm,cy],[cx+maxR-arm,cy,cx+maxR,cy],
+    [cx,cy-maxR,cx,cy-maxR+arm],[cx,cy+maxR-arm,cx,cy+maxR]
+  ].forEach(([x1,y1,x2,y2])=>{
+    svg+=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="rgba(0,255,100,0.3)" stroke-width="4"/>`;
+    svg+=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="rgba(0,255,100,0.9)" stroke-width="2"/>`;
   });
-  return `<svg width="100%" height="100%" viewBox="0 0 ${S} ${S}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" style="position:absolute;inset:0">${svg}</svg>`;
+
+  // Corner alignment brackets — thick and bright
+  const bk=20, bs=S*0.14;
+  [[bk,bk],[S-bk,bk],[bk,S-bk],[S-bk,S-bk]].forEach(([bx,by])=>{
+    const hx=bx<S/2?1:-1, hy=by<S/2?1:-1;
+    svg+=`<path d="M${bx+hx*bs},${by} L${bx},${by} L${bx},${by+hy*bs}" stroke="rgba(0,255,100,0.3)" stroke-width="7" fill="none" stroke-linecap="round"/>`;
+    svg+=`<path d="M${bx+hx*bs},${by} L${bx},${by} L${bx},${by+hy*bs}" stroke="rgba(0,255,100,1)" stroke-width="3" fill="none" stroke-linecap="round"/>`;
+  });
+
+  return `<svg width="100%" height="100%" viewBox="0 0 ${S} ${S}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">${svg}</svg>`;
 }
 function setCamType(t){App.cfg=Object.assign({},App.cfg,{type:t});DB.prefs=Object.assign({},DB.prefs,{cfg:App.cfg});const ov=document.getElementById('cam-overlay');if(ov)ov.innerHTML=buildCameraOverlaySVG(t);const chips=document.querySelectorAll('.cam-chip');chips.forEach(c=>{c.style.background=c.dataset.t===t?'rgba(0,255,136,0.22)':'rgba(255,255,255,0.08)';c.style.borderColor=c.dataset.t===t?'rgba(0,255,136,0.7)':'rgba(255,255,255,0.2)';c.style.color=c.dataset.t===t?'var(--green)':'rgba(255,255,255,0.55)';});}
 // pgCamera is intentionally removed — camera UI is injected directly by startCam()
@@ -2609,7 +2624,7 @@ async function startCam(){
       <span style="font-family:var(--head);font-size:.72rem;letter-spacing:.2em;color:#fff;flex:1">CAMERA</span>
       <div style="display:flex;gap:8px">${chips}</div>
     </div>
-    <div id="cam-overlay" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:hidden">${overlaySVG}</div>
+    <div id="cam-overlay" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:5">${overlaySVG}</div>
     <div style="position:absolute;bottom:16px;left:0;right:0;text-align:center;pointer-events:none">
       <span style="font-family:var(--head);font-size:.58rem;letter-spacing:.13em;color:rgba(255,255,255,.45);background:rgba(0,0,0,.45);padding:4px 12px;border-radius:20px">ALIGN TARGET TO GREEN RINGS</span>
     </div>
